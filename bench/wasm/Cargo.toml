@@ -22,3 +22,8 @@ lto = "fat"
 panic = "abort"
 
 [workspace]
+
+# The comparison against "rill" (an unpublished codec) is compiled only when a
+# local checkout is added as a dependency and RUSTFLAGS="--cfg rill_bench" is set.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rill_bench)"] }

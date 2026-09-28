@@ -9,7 +9,8 @@ A pure-Rust implementation of [Zstandard](https://www.rfc-editor.org/rfc/rfc8878
   - greedy, lazy and lazy2 on hash chains;
   - an optimal parser (btopt/btultra/btultra2-style price DP).
 
-  Compression ratio is within about 2-5% of C at the same level, and better than C on small inputs.
+  Compression ratio is within about 1% of C at the same level, and sometimes better on small inputs.
+- **Magicless frames.** The reference's `ZSTD_f_zstd1_magicless` format is supported, which saves 4 bytes per frame.
 - **Supports dictionaries.** It loads zstd-format dictionaries (`zstd --train` / ZDICT output, with entropy tables and repeat offsets) as well as raw-content dictionaries.
   - Dictionary match tables are built once and *attached* to each frame, never copied. This is what makes small messages fast.
 - **Safe to decode untrusted data.** Malformed input returns an error and never panics, and every decode call takes a caller-supplied output cap.
@@ -111,25 +112,59 @@ The benchmarks run on a real ILM traffic corpus (chat, control, markdown, WebSoc
 
 zstd-C is absent here because it does not build for this target.
 
-| class (n) | zr-1 | zr-3 | zr-3-dict | zr-19-dict | ruzstd-fastest | dec:ruzstd<-zr3 | brotli-q4 | deflate-l1 | lz4_flex | rill |
+| class (n) | zstd-rs-1 | zstd-rs-3 | zstd-rs-3-dict | zstd-rs-19-dict | ruzstd-fastest | ruzstd decoding zstd-rs-3 frames | brotli-q1-w16 | brotli-q4-w18 | deflate-l1 | lz4_flex |
 |---|---|---|---|---|---|---|---|---|---|---|
-| chat (49) | 0.856 / 6.0 / 2.52 | 0.851 / 6.4 / 2.61 | 0.357 / 1.5 / 0.55 | 0.345 / 25.3 / 0.52 | 1.036 / 11.0 / 0.85 | 0.851 / 6.4 / 5.00 | 0.803 / 20.3 / 6.85 | 0.829 / 5.5 / 3.67 | 0.936 / 0.4 / 0.09 | 0.224 / 6.2 / 1.89 |
-| ctrl (5) | 0.917 / 5.2 / 1.47 | 0.914 / 5.4 / 1.47 | 0.355 / 1.1 / 0.40 | 0.339 / 19.0 / 0.36 | 1.094 / 10.3 / 0.73 | 0.914 / 5.4 / 2.86 | 0.848 / 17.2 / 6.08 | 0.886 / 5.0 / 2.24 | 0.931 / 0.3 / 0.07 | 0.196 / 2.5 / 0.76 |
-| markdown (5) | 0.495 / 15.4 / 5.37 | 0.482 / 16.4 / 5.55 | 0.416 / 12.3 / 3.20 | 0.375 / 180.1 / 4.40 | 0.623 / 25.8 / 7.98 | 0.482 / 16.5 / 13.89 | 0.461 / 49.3 / 13.25 | 0.499 / 10.2 / 7.25 | 0.647 / 2.3 / 0.57 | 0.324 / 109.9 / 26.17 |
-| ws-json (9) | 0.195 / 35.5 / 9.74 | 0.196 / 40.9 / 9.86 | 0.185 / 50.6 / 9.64 | 0.173 / 2212 / 10.01 | 0.249 / 77.7 / 37.26 | 0.196 / 41.0 / 37.18 | 0.194 / 123.2 / 32.22 | 0.238 / 23.6 / 17.70 | 0.328 / 6.8 / 2.14 | 0.136 / 159.3 / 38.14 |
-| yjs-inc (30) | 0.805 / 6.7 / 2.44 | 0.796 / 6.9 / 2.47 | 0.429 / 2.4 / 0.90 | 0.411 / 31.6 / 0.85 | 0.960 / 11.9 / 1.00 | 0.796 / 7.1 / 5.31 | 0.755 / 19.9 / 7.02 | 0.749 / 5.7 / 3.79 | 0.905 / 0.5 / 0.09 | 0.298 / 7.6 / 2.41 |
-| yjs-snap (3) | 0.129 / 60.3 / 19.83 | 0.122 / 64.0 / 20.46 | 0.116 / 70.4 / 21.03 | 0.108 / 5042 / 23.46 | 0.151 / 164.4 / 57.98 | 0.122 / 63.6 / 54.93 | 0.115 / 200.8 / 52.72 | 0.228 / 58.1 / 41.45 | 0.170 / 15.4 / 4.53 | 0.099 / 658.7 / 154.24 |
-| file-chunk (18) | 0.935 / 117.9 / 6.08 | 0.930 / 137.7 / 5.24 | 0.930 / 189.7 / 5.37 | 0.922 / 1794 / 11.16 | 0.937 / 564.9 / 18.54 | 0.930 / 137.8 / 16.34 | 0.930 / 320.9 / 172.82 | 0.932 / 169.8 / 124.55 | 0.944 / 11.0 / 2.36 | 0.955 / 283.0 / 103.69 |
+| chat (49) | 0.856 / 5.2 / 2.49 | 0.851 / 5.5 / 2.56 | 0.357 / 1.4 / 0.54 | 0.345 / 25.1 / 0.51 | 1.036 / 11.0 / 0.85 | 0.851 / 5.5 / 4.99 | 0.934 / 7.0 / 8.39 | 0.803 / 20.2 / 6.81 | 0.829 / 5.7 / 3.75 | 0.936 / 0.4 / 0.10 |
+| ctrl (5) | 0.916 / 4.6 / 1.48 | 0.914 / 4.8 / 1.47 | 0.355 / 1.0 / 0.39 | 0.339 / 18.9 / 0.36 | 1.094 / 10.4 / 0.74 | 0.914 / 4.8 / 2.85 | 0.977 / 6.2 / 5.87 | 0.848 / 17.3 / 6.10 | 0.886 / 5.2 / 2.27 | 0.931 / 0.3 / 0.07 |
+| markdown (5) | 0.495 / 13.3 / 5.09 | 0.482 / 14.7 / 5.23 | 0.416 / 11.1 / 2.93 | 0.375 / 180.0 / 4.09 | 0.623 / 26.1 / 8.02 | 0.482 / 14.8 / 13.68 | 0.521 / 20.0 / 17.61 | 0.461 / 49.8 / 13.46 | 0.499 / 10.5 / 7.43 | 0.647 / 2.3 / 0.58 |
+| ws-json (9) | 0.195 / 27.7 / 9.38 | 0.196 / 34.1 / 9.48 | 0.185 / 44.6 / 9.20 | 0.173 / 2253.0 / 9.59 | 0.249 / 78.3 / 36.85 | 0.196 / 34.1 / 36.47 | 0.370 / 88.9 / 68.52 | 0.194 / 123.9 / 31.79 | 0.238 / 23.9 / 17.88 | 0.328 / 6.8 / 2.19 |
+| yjs-inc (30) | 0.811 / 6.3 / 2.58 | 0.804 / 6.4 / 2.49 | 0.429 / 2.3 / 0.98 | 0.411 / 35.6 / 0.98 | 0.960 / 13.8 / 1.18 | 0.804 / 6.7 / 6.20 | 0.837 / 8.7 / 9.81 | 0.755 / 22.2 / 8.21 | 0.749 / 7.0 / 4.64 | 0.905 / 0.6 / 0.11 |
+| yjs-snap (3) | 0.129 / 56.8 / 19.66 | 0.122 / 66.9 / 21.92 | 0.116 / 79.3 / 23.94 | 0.108 / 6089.2 / 24.82 | 0.151 / 181.4 / 62.12 | 0.122 / 62.9 / 60.55 | 0.474 / 355.0 / 290.96 | 0.115 / 240.8 / 64.63 | 0.228 / 79.5 / 61.42 | 0.170 / 23.0 / 6.69 |
+| file-chunk (18) | 0.932 / 95.2 / 5.88 | 0.930 / 107.7 / 4.84 | 0.930 / 154.0 / 4.99 | 0.922 / 1791.9 / 10.28 | 0.937 / 556.3 / 18.65 | 0.930 / 106.8 / 16.46 | 0.949 / 294.7 / 100.32 | 0.930 / 322.6 / 175.23 | 0.932 / 170.7 / 125.05 | 0.944 / 10.9 / 2.41 |
 
-Native results (Apple M-series, compared with zstd-C) are in [PROGRESS.md](PROGRESS.md).
+### Native (Apple M-series arm64), compared with the C library (zstd 1.5.7) at the same level
 
-The wasm module (encoder plus decoder, `zstd-rs-wasm`) is 164 KB, or 64 KB gzipped.
+| class (n) | zstd-rs-1 | zstd-c-1 | zstd-rs-3 | zstd-c-3 | zstd-rs-3-dict | zstd-c-3-dict | zstd-rs-19-dict | zstd-c-19-dict | ruzstd-fastest |
+|---|---|---|---|---|---|---|---|---|---|
+| chat (49) | 0.856 / 4.0 / 2.13 | 0.858 / 4.0 / 2.13 | 0.851 / 4.3 / 2.21 | 0.851 / 4.2 / 2.22 | 0.357 / 1.0 / 0.50 | 0.349 / 0.7 / 0.34 | 0.345 / 17.0 / 0.48 | 0.354 / 19.8 / 0.33 | 1.036 / 13.9 / 0.65 |
+| ctrl (5) | 0.916 / 3.5 / 1.24 | 0.919 / 3.9 / 1.26 | 0.914 / 3.7 / 1.25 | 0.915 / 4.0 / 1.25 | 0.355 / 0.7 / 0.38 | 0.351 / 0.5 / 0.24 | 0.339 / 12.6 / 0.34 | 0.357 / 16.1 / 0.21 | 1.094 / 13.2 / 0.55 |
+| markdown (5) | 0.495 / 9.7 / 3.95 | 0.494 / 6.9 / 3.15 | 0.482 / 10.9 / 4.04 | 0.482 / 7.4 / 3.24 | 0.416 / 7.7 / 2.26 | 0.412 / 5.5 / 2.56 | 0.375 / 128.4 / 3.13 | 0.372 / 113.8 / 3.10 | 0.623 / 27.2 / 5.71 |
+| ws-json (9) | 0.195 / 19.4 / 7.45 | 0.195 / 10.6 / 4.71 | 0.196 / 23.5 / 7.59 | 0.196 / 15.8 / 4.91 | 0.185 / 29.6 / 7.36 | 0.188 / 28.9 / 4.24 | 0.173 / 1477.3 / 7.59 | 0.172 / 1181.4 / 4.60 | 0.249 / 68.0 / 22.87 |
+| yjs-inc (30) | 0.811 / 4.1 / 1.85 | 0.815 / 4.1 / 1.87 | 0.804 / 4.4 / 1.88 | 0.808 / 4.2 / 1.87 | 0.429 / 1.4 / 0.79 | 0.452 / 1.0 / 0.50 | 0.411 / 20.5 / 0.75 | 0.414 / 27.5 / 0.43 | 0.960 / 14.1 / 0.76 |
+| yjs-snap (3) | 0.129 / 36.5 / 14.55 | 0.128 / 21.7 / 9.11 | 0.122 / 40.8 / 14.93 | 0.122 / 26.4 / 9.31 | 0.116 / 46.4 / 14.57 | 0.117 / 32.8 / 9.02 | 0.108 / 3518.8 / 15.83 | 0.107 / 3638.6 / 11.43 | 0.151 / 133.9 / 38.83 |
+| file-chunk (18) | 0.932 / 67.2 / 5.60 | 0.938 / 29.0 / 3.34 | 0.930 / 73.5 / 4.71 | 0.931 / 45.7 / 2.80 | 0.930 / 109.6 / 4.86 | 0.931 / 120.6 / 2.60 | 0.922 / 1251.3 / 8.72 | 0.922 / 1130.2 / 5.81 | 0.937 / 465.9 / 15.30 |
+
+### Decoder speed on identical frames (the C library's level-3 output)
+
+| class (n) | zstd-rs decoding C-3 | ruzstd decoding C-3 | zstd-c-3 | zstd-rs decoding C-3-dict | zstd-c-3-dict |
+|---|---|---|---|---|---|
+| chat (49) | 0.851 / 4.2 / 2.22 | 0.851 / 4.2 / 3.47 | 0.851 / 4.2 / 2.22 | 0.349 / 0.7 / 0.49 | 0.349 / 0.7 / 0.34 |
+| markdown (5) | 0.482 / 7.3 / 4.08 | 0.482 / 7.3 / 9.13 | 0.482 / 7.4 / 3.24 | 0.412 / 5.5 / 3.17 | 0.412 / 5.5 / 2.56 |
+| ws-json (9) | 0.196 / 15.9 / 7.52 | 0.196 / 15.8 / 22.85 | 0.196 / 15.8 / 4.91 | 0.188 / 28.7 / 7.03 | 0.188 / 28.9 / 4.24 |
+| yjs-inc (30) | 0.808 / 4.2 / 1.88 | 0.808 / 4.2 / 3.66 | 0.808 / 4.2 / 1.87 | 0.452 / 1.0 / 0.83 | 0.452 / 1.0 / 0.50 |
+| yjs-snap (3) | 0.122 / 26.4 / 14.76 | 0.122 / 26.3 / 37.42 | 0.122 / 26.4 / 9.31 | 0.117 / 31.9 / 14.46 | 0.117 / 32.8 / 9.02 |
+| file-chunk (18) | 0.931 / 45.8 / 5.12 | 0.931 / 45.8 / 13.93 | 0.931 / 45.7 / 2.80 | 0.931 / 120.7 / 4.77 | 0.931 / 120.6 / 2.60 |
+
+ruzstd 0.8 could not decode any dictionary frame in this corpus (`UninitializedHuffmanTable`), so it has no dictionary column.
+
+### Summary
+
+- **Against ruzstd** (the existing pure-Rust crate, `Fastest` is its only level):
+  - Our level 1 compresses better on every class, and 2.8-7x faster. For example, chat is 0.856 vs 1.036, which means ruzstd *grows* chat.
+  - Our decoder is 1.6-3x faster on the same frames.
+  - We also decode dictionary frames, which ruzstd cannot.
+- **Against zstd-C at the same level:**
+  - Ratio is equal to within ±1% at levels 1 and 3. With dictionaries it is better on Yjs (0.429 vs 0.452) and within 2% on chat.
+  - Small-frame speed is close: chat with a dictionary takes 1.0 µs vs 0.7 µs to compress, and 0.50 vs 0.34 µs to decode.
+  - Large frames are 1.5-2.3x slower to compress and about 1.6x slower to decode.
+  - Level 19 ratio is within 1-3%.
+- **The wasm module (encoder + decoder, `zstd-rs-wasm`)** is 164 KB, or 64 KB gzipped. It has 0 imports.
 
 ## Limitations
 
 - The API is one-shot: whole input in, whole frame out. There is no streaming `Read`/`Write` adapter yet. The job API covers large inputs.
-- Levels 13-22 use hash chains rather than the reference's binary trees. Their ratio is within about 2-5% of C, and they are slower on large inputs.
-- On large inputs, speed is about 55-75% of the C library natively. Small frames with a dictionary are closer.
+- Levels 13-22 use hash chains rather than the reference's binary trees. Their ratio is within about 1-3% of C, and they are slower on large inputs.
+- On large inputs, native speed is about 45-70% of the C library for compression and about 60% for decompression. Small frames with a dictionary are closer.
 - There is no built-in dictionary trainer. Train with `zstd --train` (ZDICT); both formats are loaded.
 - Legacy zstd formats (pre-v0.8) are not supported.
 

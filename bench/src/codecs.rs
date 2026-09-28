@@ -136,6 +136,7 @@ pub fn all(zdict: &[u8], rill_dict: &[u8]) -> Vec<Codec> {
         Box::new(|b, n| miniz_oxide::inflate::decompress_to_vec_with_limit(b, n).unwrap()),
     ));
     v.push(codec("lz4_flex", Box::new(|b| lz4_flex::block::compress(b)), Box::new(|b, n| lz4_flex::block::decompress(b, n).unwrap())));
+    #[cfg(rill_bench)]
     {
         let prof = rill::builtin_v1();
         let mut rc = rill::Compressor::new();

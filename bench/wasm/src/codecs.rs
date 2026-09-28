@@ -79,13 +79,16 @@ pub fn all(zdict: &[u8]) -> Vec<Codec> {
         c: Box::new(|b, o| *o = lz4_flex::block::compress(b)),
         d: Box::new(|b, n, o| *o = lz4_flex::block::decompress(b, n).unwrap()),
     });
-    let prof = rill::builtin_v1();
-    let mut rc = rill::Compressor::new();
-    let mut rd = rill::Decompressor::new();
-    v.push(Codec {
-        name: "rill".into(),
-        c: Box::new(move |b, o| rc.compress_into(&prof, b, &rill::Options::DEFAULT, o)),
-        d: Box::new(move |b, n, o| rd.decompress_into(&[prof], b, n, o).unwrap()),
-    });
+    #[cfg(rill_bench)]
+    {
+        let prof = rill::builtin_v1();
+        let mut rc = rill::Compressor::new();
+        let mut rd = rill::Decompressor::new();
+        v.push(Codec {
+            name: "rill".into(),
+            c: Box::new(move |b, o| rc.compress_into(&prof, b, &rill::Options::DEFAULT, o)),
+            d: Box::new(move |b, n, o| rd.decompress_into(&[prof], b, n, o).unwrap()),
+        });
+    }
     v
 }

@@ -64,4 +64,4 @@ The one `diff_c` finding was real, and is fixed and kept in `tests/regressions`:
 
 ## Benchmarks
 
-See the README for the V8 table. The native tables are below and are refreshed each iteration.
+The final tables are in README.md. The raw CSVs are local only (`results/`, gitignored, because the corpus is private).

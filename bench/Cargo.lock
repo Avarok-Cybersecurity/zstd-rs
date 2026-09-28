@@ -123,10 +123,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
-name = "rill"
-version = "0.1.0"
-
-[[package]]
 name = "ruzstd"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -155,7 +151,6 @@ dependencies = [
  "brotli-decompressor",
  "lz4_flex",
  "miniz_oxide",
- "rill",
  "ruzstd",
  "zstd",
  "zstd-rs",
