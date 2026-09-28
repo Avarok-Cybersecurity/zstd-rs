@@ -103,3 +103,30 @@ fn golden_compression_inputs() {
         }
     }
 }
+
+#[test]
+fn dictionary_actually_helps_small_messages() {
+    let samples = common::samples();
+    let dict_bytes = zstd::dict::from_samples(&samples, 16 * 1024).unwrap();
+    let dict = Dictionary::new(&dict_bytes, DictionaryFormat::Zstd).unwrap();
+    for &level in &[1, 3, 19] {
+        let edict = EncoderDictionary::new(&dict, level).unwrap();
+        let cfg = CompressionConfig { level, dict_id: false, ..CompressionConfig::DEFAULT };
+        let mut c = Compressor::new(cfg).unwrap();
+        let mut cz = zstd::bulk::Compressor::with_dictionary(level, &dict_bytes).unwrap();
+        cz.set_parameter(zstd::zstd_safe::CParameter::DictIdFlag(false)).unwrap();
+        let (mut ours, mut plain, mut theirs, mut raw) = (0, 0, 0, 0);
+        for i in 0..100u64 {
+            let msg = common::text(60 + (i as usize * 13) % 400, 3_000_000 + i);
+            let (mut a, mut b) = (Vec::new(), Vec::new());
+            c.compress(&msg, Some(&edict), &mut a).unwrap();
+            c.compress(&msg, None, &mut b).unwrap();
+            ours += a.len();
+            plain += b.len();
+            theirs += cz.compress(&msg).unwrap().len();
+            raw += msg.len();
+        }
+        assert!(ours * 10 < plain * 7, "L{level}: dictionary saves too little: {ours} vs {plain} without (raw {raw})");
+        assert!(ours * 100 < theirs * 110, "L{level}: {ours} bytes vs C's {theirs} with the same dictionary");
+    }
+}

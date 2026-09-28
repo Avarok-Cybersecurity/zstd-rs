@@ -122,4 +122,25 @@ mod tests {
         let present: Vec<u8> = (0..=255u8).filter(|&b| count[b as usize] > 0).collect();
         assert!(ct.cost_bits(&count, &present).unwrap() / 8 < text.len() as u64);
     }
+
+    #[test]
+    fn streams_must_be_consumed_exactly() {
+        let text = b"exactness matters: every bit of a Huffman stream is accounted for".repeat(8);
+        let mut count = [0u32; 256];
+        for &b in &text {
+            count[b as usize] += 1;
+        }
+        let hw = build::build(&count, 11);
+        let (ct, dt) = (HufCTable::new(&hw), HufDTable::new(&hw));
+        for n in [5usize, 40, 200] {
+            let mut s = Vec::new();
+            ct.encode_1x(&text[..n], &mut s);
+            let mut back = alloc::vec![0u8; n];
+            dt.decode_1x(&s, &mut back).unwrap();
+            let mut padded = alloc::vec![0xA5u8; 9];
+            padded.extend_from_slice(&s);
+            assert!(dt.decode_1x(&padded, &mut back).is_err(), "unread bits accepted (n = {n})");
+            assert!(dt.decode_1x(&s, &mut alloc::vec![0u8; n + 3]).is_err(), "over-read accepted (n = {n})");
+        }
+    }
 }
