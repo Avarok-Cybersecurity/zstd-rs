@@ -97,10 +97,12 @@ pub fn decode(
     };
     for i in 0..n {
         let (lle, ofe, mle) = (ll_t.e[ll_s], of_t.e[of_s], ml_t.e[ml_s]);
+        // Two refills per sequence: offset + match length take at most 31 + 16
+        // bits, literal length + the three state updates at most 16 + 26 (<= 57).
         r.refill();
         let of_value = ofe.base + r.read(ofe.add_bits as u32) as u32;
-        r.refill();
         let ml = mle.base + r.read(mle.add_bits as u32) as u32;
+        r.refill();
         let ll = lle.base + r.read(lle.add_bits as u32) as u32;
         let offset = if of_value > 3 {
             let o = of_value - 3;
@@ -132,7 +134,6 @@ pub fn decode(
         };
         ex.sequence(lits, lits_len, ll as usize, ml as usize, offset as usize)?;
         if i + 1 < n {
-            r.refill();
             ll_s = state_update(&lle, &mut r);
             ml_s = state_update(&mle, &mut r);
             of_s = state_update(&ofe, &mut r);

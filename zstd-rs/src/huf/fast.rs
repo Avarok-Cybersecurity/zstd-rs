@@ -65,33 +65,43 @@ impl<'a> Stream<'a> {
 pub fn four(table: &[HEntry; 2048], max_bits: u32, s: &mut [Stream<'_>; 4], out: [&mut [u8]; 4]) -> usize {
     let shift = 64 - max_bits;
     let [o0, o1, o2, o3] = out;
-    let n = o0.len().min(o1.len()).min(o2.len()).min(o3.len());
-    let mut i = 0;
-    while i + PER_RELOAD <= n && s.iter().all(Stream::roomy) {
-        for k in i..i + PER_RELOAD {
-            o0[k] = s[0].decode(table, shift);
-            o1[k] = s[1].decode(table, shift);
-            o2[k] = s[2].decode(table, shift);
-            o3[k] = s[3].decode(table, shift);
+    let mut done = 0;
+    let rounds = o0
+        .chunks_exact_mut(PER_RELOAD)
+        .zip(o1.chunks_exact_mut(PER_RELOAD))
+        .zip(o2.chunks_exact_mut(PER_RELOAD))
+        .zip(o3.chunks_exact_mut(PER_RELOAD));
+    for (((a, b), c), d) in rounds {
+        if !s.iter().all(Stream::roomy) {
+            break;
+        }
+        for k in 0..PER_RELOAD {
+            a[k] = s[0].decode(table, shift);
+            b[k] = s[1].decode(table, shift);
+            c[k] = s[2].decode(table, shift);
+            d[k] = s[3].decode(table, shift);
         }
         for st in s.iter_mut() {
             st.reload();
         }
-        i += PER_RELOAD;
+        done += PER_RELOAD;
     }
-    i
+    done
 }
 
 /// Single-stream version of [`four`].
 pub fn one(table: &[HEntry; 2048], max_bits: u32, s: &mut Stream<'_>, out: &mut [u8]) -> usize {
     let shift = 64 - max_bits;
-    let mut i = 0;
-    while i + PER_RELOAD <= out.len() && s.roomy() {
-        for b in &mut out[i..i + PER_RELOAD] {
+    let mut done = 0;
+    for chunk in out.chunks_exact_mut(PER_RELOAD) {
+        if !s.roomy() {
+            break;
+        }
+        for b in chunk.iter_mut() {
             *b = s.decode(table, shift);
         }
         s.reload();
-        i += PER_RELOAD;
+        done += PER_RELOAD;
     }
-    i
+    done
 }
