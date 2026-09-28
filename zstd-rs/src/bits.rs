@@ -4,15 +4,20 @@ use crate::error::{Error, Result};
 use alloc::vec::Vec;
 
 /// Forward bit writer producing a stream that `RevReader` reads back in reverse.
+/// It stores whole 8-byte words into `out` (grown ahead of the write position)
+/// and trims the spare bytes in `finish`.
 pub struct BitWriter<'a> {
     out: &'a mut Vec<u8>,
+    pos: usize,
     acc: u64,
     n: u32,
 }
 
 impl<'a> BitWriter<'a> {
     pub fn new(out: &'a mut Vec<u8>) -> Self {
-        BitWriter { out, acc: 0, n: 0 }
+        let pos = out.len();
+        out.resize(pos + 64, 0);
+        BitWriter { out, pos, acc: 0, n: 0 }
     }
 
     /// Appends the low `nb` bits of `v` (`nb` <= 32; `v` must fit in `nb` bits).
@@ -22,10 +27,42 @@ impl<'a> BitWriter<'a> {
         self.acc |= v << self.n;
         self.n += nb;
         if self.n >= 32 {
-            self.out.extend_from_slice(&(self.acc as u32).to_le_bytes());
-            self.acc >>= 32;
-            self.n -= 32;
+            self.spill();
         }
+    }
+
+    /// Appends bits without flushing; the caller keeps the total under 64
+    /// between [`BitWriter::flush`] calls (after a flush at most 7 bits are pending).
+    #[inline(always)]
+    pub fn add_unflushed(&mut self, v: u64, nb: u32) {
+        self.acc |= v << self.n;
+        self.n += nb;
+    }
+
+    /// Stores the pending whole bytes, leaving at most 7 bits pending.
+    #[inline(always)]
+    pub fn flush(&mut self) {
+        if self.pos + 8 > self.out.len() {
+            let len = self.out.len();
+            self.out.resize(len * 2, 0);
+        }
+        self.out[self.pos..self.pos + 8].copy_from_slice(&self.acc.to_le_bytes());
+        let bytes = self.n >> 3;
+        self.pos += bytes as usize;
+        self.acc = if bytes == 8 { 0 } else { self.acc >> (bytes * 8) };
+        self.n &= 7;
+    }
+
+    #[inline(always)]
+    fn spill(&mut self) {
+        if self.pos + 8 > self.out.len() {
+            let len = self.out.len();
+            self.out.resize(len * 2, 0);
+        }
+        self.out[self.pos..self.pos + 8].copy_from_slice(&self.acc.to_le_bytes());
+        self.pos += 4;
+        self.acc >>= 32;
+        self.n -= 32;
     }
 
     /// Writes the end marker and pads to a byte boundary.
@@ -37,7 +74,11 @@ impl<'a> BitWriter<'a> {
     /// Pads to a byte boundary without an end marker (forward-read structures).
     pub fn finish_plain(self) {
         let bytes = self.n.div_ceil(8) as usize;
-        self.out.extend_from_slice(&self.acc.to_le_bytes()[..bytes]);
+        if self.pos + 8 > self.out.len() {
+            self.out.resize(self.pos + 8, 0);
+        }
+        self.out[self.pos..self.pos + 8].copy_from_slice(&self.acc.to_le_bytes());
+        self.out.truncate(self.pos + bytes);
     }
 }
 

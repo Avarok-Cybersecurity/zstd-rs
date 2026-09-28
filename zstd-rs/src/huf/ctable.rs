@@ -58,8 +58,17 @@ impl HufCTable {
 
     fn stream(&self, src: &[u8], out: &mut Vec<u8>) {
         let mut w = BitWriter::new(out);
-        for &b in src.iter().rev() {
-            w.add(self.codes[b as usize] as u64, self.lens[b as usize] as u32);
+        let tail = src.len() % 4;
+        for &b in src[src.len() - tail..].iter().rev() {
+            w.add_unflushed(self.codes[b as usize] as u64, self.lens[b as usize] as u32);
+        }
+        w.flush();
+        // Four 11-bit codes (44 bits) plus at most 7 pending bits fit in 64.
+        for q in src[..src.len() - tail].rchunks_exact(4) {
+            for &b in q.iter().rev() {
+                w.add_unflushed(self.codes[b as usize] as u64, self.lens[b as usize] as u32);
+            }
+            w.flush();
         }
         w.finish();
     }

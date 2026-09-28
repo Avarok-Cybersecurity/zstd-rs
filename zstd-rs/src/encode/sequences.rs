@@ -47,6 +47,7 @@ fn choose(
     st: &EntropyState,
     pre: &PredefinedC,
     dict: Option<&DictCTables>,
+    strategy_index: u32,
     out: &mut Vec<u8>,
 ) -> Result<(u8, SeqChoice)> {
     let n = codes.len();
@@ -62,6 +63,11 @@ fn choose(
         }
         out.push(max as u8);
         return Ok((1, SeqChoice::Rle(max as u8)));
+    }
+    if strategy_index < 4 && n < 128 {
+        if let Some(choice) = quick_choice(i, count, n, st, pre, dict, strategy_index) {
+            return Ok(choice);
+        }
     }
     let basic = if max <= DEFAULT_MAX[i] { norm_cost(&pre.t[i].norm, count) } else { None };
     let repeat = match st.seq_held[i] {
@@ -111,6 +117,36 @@ fn choose(
     }
 }
 
+/// The reference's heuristics for fast strategies (`ZSTD_selectEncodingType`
+/// below `ZSTD_lazy`): reuse a table that covers every symbol for small blocks,
+/// use the predefined table for few or flat samples, else build a new table (`None`).
+fn quick_choice(
+    i: usize,
+    count: &[u32],
+    n: usize,
+    st: &EntropyState,
+    pre: &PredefinedC,
+    dict: Option<&DictCTables>,
+    strategy_index: u32,
+) -> Option<(u8, SeqChoice)> {
+    let covers = match st.seq_held[i] {
+        Held::Rle(_) | Held::None => false,
+        _ => st
+            .seq(i, pre, dict)
+            .is_some_and(|t| count.len() <= t.norm.symbols && count.iter().zip(&t.norm.counts).all(|(&c, &p)| c == 0 || p != 0)),
+    };
+    if covers && n < 1000 {
+        return Some((3, SeqChoice::Repeat));
+    }
+    let default_log = if i == 1 { 5 } else { 6 };
+    let most = count.iter().copied().max().unwrap_or(0) as usize;
+    let min_dynamic = ((1usize << default_log) * (10 - strategy_index as usize)) >> 3;
+    if count.len() - 1 <= DEFAULT_MAX[i] && (n < min_dynamic || most < n >> (default_log - 1)) {
+        return Some((0, SeqChoice::Predefined));
+    }
+    None
+}
+
 /// Appends the sequences section; returns the per-stream choices to commit.
 pub fn encode(
     seqs: &[Seq],
@@ -118,6 +154,7 @@ pub fn encode(
     st: &EntropyState,
     pre: &PredefinedC,
     dict: Option<&DictCTables>,
+    strategy_index: u32,
     out: &mut Vec<u8>,
 ) -> Result<[SeqChoice; 3]> {
     let n = seqs.len();
@@ -128,17 +165,15 @@ pub fn encode(
     for c in codes.c.iter_mut() {
         c.clear();
     }
-    for s in seqs {
-        codes.c[0].push(ll_code(s.ll));
-        codes.c[1].push(of_code(s.off_base));
-        codes.c[2].push(ml_code(s.ml));
-    }
+    codes.c[0].extend(seqs.iter().map(|s| ll_code(s.ll)));
+    codes.c[1].extend(seqs.iter().map(|s| of_code(s.off_base)));
+    codes.c[2].extend(seqs.iter().map(|s| ml_code(s.ml)));
     let mode_at = out.len();
     out.push(0);
     let mut modes = 0u8;
     let mut choices: [SeqChoice; 3] = [SeqChoice::Repeat, SeqChoice::Repeat, SeqChoice::Repeat];
     for (i, slot) in choices.iter_mut().enumerate() {
-        let (m, ch) = choose(i, &codes.c[i], st, pre, dict, out)?;
+        let (m, ch) = choose(i, &codes.c[i], st, pre, dict, strategy_index, out)?;
         modes |= m << (6 - 2 * i);
         *slot = ch;
     }

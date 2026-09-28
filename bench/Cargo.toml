@@ -14,3 +14,8 @@ lz4_flex = { version = "0.11", default-features = false, features = ["std", "saf
 zstd = { version = "0.13", features = ["zdict_builder", "experimental"] }
 
 [workspace]
+
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+split-debuginfo = "packed"

@@ -60,14 +60,15 @@ pub fn encode(
         write_raw(lits, out);
         return Ok(None);
     }
-    let mut count = [0u32; 256];
-    let mut present = [0u8; 257];
+    let count = histogram(lits);
+    let mut present = [0u8; 256];
     let mut distinct = 0;
-    for &b in lits {
-        let c = &mut count[b as usize];
-        present[distinct] = b;
-        distinct += (*c == 0) as usize;
-        *c += 1;
+    for (s, &c) in count.iter().enumerate() {
+        present[distinct] = s as u8;
+        distinct += (c != 0) as usize;
+        if distinct == 256 {
+            break;
+        }
     }
     let present = &present[..distinct];
     let max_symbol = present.iter().copied().max().unwrap_or(0) as usize;
@@ -163,4 +164,34 @@ fn emit(
     let v = ty as u64 | (sf << 2) | ((n as u64) << 4) | ((comp as u64) << (4 + bits));
     out[start..start + lh].copy_from_slice(&v.to_le_bytes()[..lh]);
     Ok(true)
+}
+
+/// Byte histogram; long inputs use four interleaved tables so consecutive equal
+/// bytes do not serialize on one counter.
+fn histogram(data: &[u8]) -> [u32; 256] {
+    if data.len() < 1024 {
+        let mut c = [0u32; 256];
+        for &b in data {
+            c[b as usize] += 1;
+        }
+        return c;
+    }
+    let mut c = [[0u32; 256]; 4];
+    let mut quads = data.chunks_exact(4);
+    for q in &mut quads {
+        c[0][q[0] as usize] += 1;
+        c[1][q[1] as usize] += 1;
+        c[2][q[2] as usize] += 1;
+        c[3][q[3] as usize] += 1;
+    }
+    for &b in quads.remainder() {
+        c[0][b as usize] += 1;
+    }
+    let mut out = c[0];
+    for t in &c[1..] {
+        for (o, &x) in out.iter_mut().zip(t) {
+            *o += x;
+        }
+    }
+    out
 }

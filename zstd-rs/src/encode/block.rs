@@ -26,7 +26,7 @@ pub fn compress(
     let at = out.len();
     out.extend_from_slice(&[0; 3]);
     let huf = literals::encode(&w.store.lits, &w.entropy, dict_tables, sidx, out)?;
-    let seq = sequences::encode(&w.store.seqs, &mut w.codes, &w.entropy, &w.pre, dict_tables, out)?;
+    let seq = sequences::encode(&w.store.seqs, &mut w.codes, &w.entropy, &w.pre, dict_tables, sidx, out)?;
     let csize = out.len() - at - 3;
     let min_gain = literals::min_gain(raw.len(), sidx);
     if csize + min_gain >= raw.len() || csize >= crate::frame::BLOCK_MAX {
