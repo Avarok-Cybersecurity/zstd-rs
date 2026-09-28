@@ -1,7 +1,7 @@
 // CI smoke test: round-trips data through the wasm module under V8 at several
 // levels, with and without a raw dictionary, and checks error reporting.
 import { readFileSync } from 'node:fs';
-import { ZstdRs, FLAG_CHECKSUM, FLAG_CONTENT_SIZE } from './zstd-rs.mjs';
+import { ZstdRs, FLAG_CHECKSUM, FLAG_CONTENT_SIZE, FLAG_MAGICLESS } from './zstd-rs.mjs';
 
 const z = await ZstdRs.load(readFileSync(process.argv[2]));
 const text = new TextEncoder().encode('{"type":"chat","body":"hello from the wasm smoke test"} '.repeat(200));
@@ -16,6 +16,12 @@ for (const level of [1, 3, 9, 19]) {
     if (back.length !== text.length || back.some((b, i) => b !== text[i])) throw new Error(`mismatch at level ${level}`);
     if (frame.length >= text.length / 10) throw new Error(`poor ratio at level ${level}: ${frame.length}`);
   }
+}
+{
+  const c = z.compressor(3, 22, FLAG_CONTENT_SIZE | FLAG_MAGICLESS);
+  const frame = z.compress(c, text);
+  const back = z.decompress(frame, text.length, 0, FLAG_MAGICLESS);
+  if (back.length !== text.length || frame[0] === 0x28) throw new Error('magicless round trip failed');
 }
 let threw = false;
 try {

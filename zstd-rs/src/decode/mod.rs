@@ -8,7 +8,7 @@ pub mod tables;
 
 use crate::dict::Dictionary;
 use crate::error::{Error, Result};
-use crate::frame::{parse_block_header, BlockType, FrameHeader, BLOCK_MAX, SKIPPABLE_BASE, SKIPPABLE_MASK, WINDOW_LOG_MAX};
+use crate::frame::{parse_block_header, BlockType, FrameFormat, FrameHeader, BLOCK_MAX, SKIPPABLE_BASE, SKIPPABLE_MASK, WINDOW_LOG_MAX};
 use crate::huf::dtable::HufDTable;
 use crate::xxh64::xxh64;
 use alloc::vec::Vec;
@@ -65,11 +65,24 @@ impl Decompressor {
     /// Fails with `OutputLimit` before `out` would grow past `max_output` bytes in total.
     /// Returns the number of bytes appended. Like the reference, empty input is zero frames.
     pub fn decompress(&mut self, src: &[u8], dict: Option<&DecoderDictionary>, max_output: usize, out: &mut Vec<u8>) -> Result<usize> {
+        self.decompress_format(FrameFormat::Standard, src, dict, max_output, out)
+    }
+
+    /// Like [`Decompressor::decompress`] for frames in `format` (magicless frames
+    /// are concatenated without magic numbers and cannot include skippable frames).
+    pub fn decompress_format(
+        &mut self,
+        format: FrameFormat,
+        src: &[u8],
+        dict: Option<&DecoderDictionary>,
+        max_output: usize,
+        out: &mut Vec<u8>,
+    ) -> Result<usize> {
         let before = out.len();
         let limit = before.checked_add(max_output).ok_or(Error::Parameter("output limit overflows"))?;
         let mut at = 0;
         while at < src.len() {
-            at += self.decompress_frame(&src[at..], dict, limit, out)?;
+            at += self.frame(format, &src[at..], dict, limit, out)?;
         }
         Ok(out.len() - before)
     }
@@ -77,6 +90,21 @@ impl Decompressor {
     /// Decodes one frame (or skips one skippable frame) at the start of `src`,
     /// appending to `out` without letting it exceed `limit` bytes. Returns bytes consumed.
     pub fn decompress_frame(&mut self, src: &[u8], dict: Option<&DecoderDictionary>, limit: usize, out: &mut Vec<u8>) -> Result<usize> {
+        self.frame(FrameFormat::Standard, src, dict, limit, out)
+    }
+
+    fn frame(
+        &mut self,
+        format: FrameFormat,
+        src: &[u8],
+        dict: Option<&DecoderDictionary>,
+        limit: usize,
+        out: &mut Vec<u8>,
+    ) -> Result<usize> {
+        if format == FrameFormat::Magicless {
+            let h = FrameHeader::parse_format(src, format)?;
+            return self.frame_with(src, &h, dict, limit, out);
+        }
         let magic = u32::from_le_bytes(src.get(..4).ok_or(Error::Truncated)?.try_into().map_err(|_| Error::Truncated)?);
         if magic & SKIPPABLE_MASK == SKIPPABLE_BASE {
             let len = u32::from_le_bytes(src.get(4..8).ok_or(Error::Truncated)?.try_into().map_err(|_| Error::Truncated)?);
@@ -84,6 +112,18 @@ impl Decompressor {
             return if end <= src.len() { Ok(end) } else { Err(Error::Truncated) };
         }
         let h = FrameHeader::parse(src)?;
+        self.frame_with(src, &h, dict, limit, out)
+    }
+
+    /// Decodes the frame whose header `h` was parsed from the start of `src`.
+    fn frame_with(
+        &mut self,
+        src: &[u8],
+        h: &FrameHeader,
+        dict: Option<&DecoderDictionary>,
+        limit: usize,
+        out: &mut Vec<u8>,
+    ) -> Result<usize> {
         if h.window_size > 1u64 << WINDOW_LOG_MAX {
             return Err(Error::WindowTooLarge);
         }
@@ -106,7 +146,7 @@ impl Decompressor {
             out.resize(frame_start + cs as usize + execute::SLACK, 0);
         }
         let mut pos = frame_start;
-        let body = self.frame_blocks(src, &h, dict, limit, out, &mut pos);
+        let body = self.frame_blocks(src, h, dict, limit, out, &mut pos);
         out.truncate(pos);
         let mut at = body?;
         let produced = (pos - frame_start) as u64;

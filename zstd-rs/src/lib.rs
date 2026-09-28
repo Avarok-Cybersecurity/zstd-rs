@@ -20,5 +20,5 @@ pub use decode::{DecoderDictionary, Decompressor};
 pub use dict::{Dictionary, DictionaryFormat};
 pub use encode::{CompressionConfig, Compressor, EncoderDictionary, MAX_LEVEL, MIN_LEVEL};
 pub use error::{Error, Result};
-pub use frame::FrameHeader;
+pub use frame::{FrameFormat, FrameHeader};
 pub use xxh64::{xxh64, Xxh64};

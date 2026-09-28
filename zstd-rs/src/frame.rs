@@ -10,6 +10,18 @@ pub const BLOCK_MAX: usize = 128 * 1024;
 pub const WINDOW_LOG_MIN: u32 = 10;
 pub const WINDOW_LOG_MAX: u32 = 31;
 
+/// Frame layout: standard (4-byte magic number first) or the reference's
+/// "magicless" variant (`ZSTD_f_zstd1_magicless`), which omits the magic number.
+/// Magicless frames save 4 bytes per frame when both ends agree on the format out
+/// of band; they cannot be mixed with skippable frames.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameFormat {
+    /// RFC 8878 frames, starting with the magic number.
+    Standard,
+    /// Frames without the magic number.
+    Magicless,
+}
+
 /// A parsed frame header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrameHeader {
@@ -35,10 +47,21 @@ fn le(src: &[u8], at: usize, n: usize) -> Result<u64> {
 impl FrameHeader {
     /// Parses the header of a zstd frame starting at `src[0]` (the magic number).
     pub fn parse(src: &[u8]) -> Result<FrameHeader> {
-        if le(src, 0, 4)? as u32 != MAGIC {
-            return Err(Error::BadMagic);
-        }
-        let fhd = *src.get(4).ok_or(Error::Truncated)?;
+        Self::parse_format(src, FrameFormat::Standard)
+    }
+
+    /// Parses a frame header in the given format.
+    pub fn parse_format(src: &[u8], format: FrameFormat) -> Result<FrameHeader> {
+        let start = match format {
+            FrameFormat::Standard => {
+                if le(src, 0, 4)? as u32 != MAGIC {
+                    return Err(Error::BadMagic);
+                }
+                4
+            }
+            FrameFormat::Magicless => 0,
+        };
+        let fhd = *src.get(start).ok_or(Error::Truncated)?;
         let fcs_flag = fhd >> 6;
         let single_segment = fhd & 0x20 != 0;
         if fhd & 0x08 != 0 {
@@ -53,7 +76,7 @@ impl FrameHeader {
             2 => 4,
             _ => 8,
         };
-        let mut at = 5;
+        let mut at = start + 1;
         let mut window_size = 0u64;
         if !single_segment {
             let wd = *src.get(at).ok_or(Error::Truncated)?;
@@ -78,7 +101,14 @@ impl FrameHeader {
 
     /// Appends this header (magic included). `window_log` is used when not single-segment.
     pub fn write(&self, window_log: u32, out: &mut Vec<u8>) {
-        out.extend_from_slice(&MAGIC.to_le_bytes());
+        self.write_format(FrameFormat::Standard, window_log, out)
+    }
+
+    /// Appends this header in the given format.
+    pub fn write_format(&self, format: FrameFormat, window_log: u32, out: &mut Vec<u8>) {
+        if format == FrameFormat::Standard {
+            out.extend_from_slice(&MAGIC.to_le_bytes());
+        }
         let (fcs_flag, fcs_len) = match self.content_size {
             None => (0u8, 0usize),
             Some(n) if self.single_segment && n < 256 => (0, 1),

@@ -3,6 +3,7 @@
 export const FLAG_CHECKSUM = 1;
 export const FLAG_CONTENT_SIZE = 2;
 export const FLAG_DICT_ID = 4;
+export const FLAG_MAGICLESS = 8;
 const STATUS = { '-1': 'bad handle', '-2': 'invalid parameter', '-3': 'output limit exceeded', '-4': 'corrupt data', '-5': 'dictionary error', '-6': 'checksum mismatch' };
 
 export class ZstdRs {
@@ -74,11 +75,12 @@ export class ZstdRs {
     }
   }
 
-  decompress(frame, maxOut, ddict = 0) {
+  /** `flags`: FLAG_MAGICLESS if the frames were made without magic numbers. */
+  decompress(frame, maxOut, ddict = 0, flags = 0) {
     const i = this.put(frame);
     const o = this.x.zr_buf_new(0);
     try {
-      this.check(this.x.zr_decompress(i, ddict, maxOut, o));
+      this.check(this.x.zr_decompress_ex(i, ddict, maxOut, flags, o));
       return this.get(o);
     } finally {
       this.free(i);

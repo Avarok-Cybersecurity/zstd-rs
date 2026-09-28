@@ -13,7 +13,7 @@ pub use dictionary::EncoderDictionary;
 pub use params::{MAX_LEVEL, MIN_LEVEL};
 
 use crate::error::{Error, Result};
-use crate::frame::{write_block_header, BlockType, FrameHeader, BLOCK_MAX};
+use crate::frame::{write_block_header, BlockType, FrameFormat, FrameHeader, BLOCK_MAX};
 use crate::xxh64::xxh64;
 use alloc::vec::Vec;
 use entropy::{EntropyState, PredefinedC};
@@ -36,11 +36,14 @@ pub struct CompressionConfig {
     pub content_size: bool,
     /// Record the dictionary ID in the frame header (when the dictionary has one).
     pub dict_id: bool,
+    /// Standard frames, or magicless ones (4 bytes smaller; the decoder must be told).
+    pub format: FrameFormat,
 }
 
 impl CompressionConfig {
     /// zstd level 1: fastest.
-    pub const FAST: CompressionConfig = CompressionConfig { level: 1, window_log: 23, checksum: false, content_size: true, dict_id: true };
+    pub const FAST: CompressionConfig =
+        CompressionConfig { level: 1, window_log: 23, checksum: false, content_size: true, dict_id: true, format: FrameFormat::Standard };
     /// zstd level 3: the reference default.
     pub const DEFAULT: CompressionConfig = CompressionConfig { level: 3, ..Self::FAST };
     /// zstd level 19: optimal parsing.
@@ -197,7 +200,7 @@ pub(crate) fn write_header(cfg: &CompressionConfig, p: &CParams, len: usize, dic
         single_segment: cfg.content_size && len as u64 <= window,
         header_len: 0,
     };
-    header.write(p.window_log, out);
+    header.write_format(cfg.format, p.window_log, out);
 }
 
 /// Appends the content checksum if configured.

@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 zstd-rs = { path = ".." }
-zstd = { version = "0.13", default-features = false, features = ["zdict_builder"] }
+zstd = { version = "0.13", default-features = false, features = ["zdict_builder", "experimental"] }
 
 [workspace]
 members = ["."]

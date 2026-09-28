@@ -4,10 +4,25 @@
 
 use crate::{code, io, status, with};
 use zstd_rs::par::Job;
-use zstd_rs::{CompressionConfig, Compressor, DecoderDictionary, Dictionary, DictionaryFormat, EncoderDictionary};
+use zstd_rs::{CompressionConfig, Compressor, DecoderDictionary, Dictionary, DictionaryFormat, EncoderDictionary, FrameFormat};
+
+fn frame_format(flags: u32) -> FrameFormat {
+    if flags & 8 != 0 {
+        FrameFormat::Magicless
+    } else {
+        FrameFormat::Standard
+    }
+}
 
 fn config(level: i32, window_log: u32, flags: u32) -> CompressionConfig {
-    CompressionConfig { level, window_log, checksum: flags & 1 != 0, content_size: flags & 2 != 0, dict_id: flags & 4 != 0 }
+    CompressionConfig {
+        level,
+        window_log,
+        checksum: flags & 1 != 0,
+        content_size: flags & 2 != 0,
+        dict_id: flags & 4 != 0,
+        format: frame_format(flags),
+    }
 }
 
 fn format(f: u32) -> DictionaryFormat {
@@ -42,7 +57,8 @@ pub extern "C" fn zr_buf_free(h: u32) {
     with(|r| drop(r.bufs.take(h)));
 }
 
-/// Creates a compressor; flags: bit0 checksum, bit1 content size, bit2 dictionary ID.
+/// Creates a compressor; flags: bit0 checksum, bit1 content size, bit2 dictionary ID,
+/// bit3 magicless frames.
 /// Returns 0 if the configuration is invalid.
 #[no_mangle]
 pub extern "C" fn zr_compressor_new(level: i32, window_log: u32, flags: u32) -> u32 {
@@ -114,6 +130,18 @@ pub extern "C" fn zr_decompress(input: u32, ddict: u32, max_out: u32, out: u32) 
             Err(e) => return e,
         };
         r.dec.decompress(src, d, max_out as usize, dst).map(|n| n as i32).unwrap_or_else(code)
+    })
+}
+
+/// Like `zr_decompress`, for frames in the format selected by `flags` bit3 (magicless).
+#[no_mangle]
+pub extern "C" fn zr_decompress_ex(input: u32, ddict: u32, max_out: u32, flags: u32, out: u32) -> i32 {
+    io(input, out, |r, src, dst| {
+        let d = match opt(ddict, |h| r.ddicts.get(h)) {
+            Ok(d) => d,
+            Err(e) => return e,
+        };
+        r.dec.decompress_format(frame_format(flags), src, d, max_out as usize, dst).map(|n| n as i32).unwrap_or_else(code)
     })
 }
 

@@ -130,3 +130,28 @@ fn dictionary_actually_helps_small_messages() {
         assert!(ours * 100 < theirs * 110, "L{level}: {ours} bytes vs C's {theirs} with the same dictionary");
     }
 }
+
+#[test]
+fn magicless_frames_interoperate() {
+    use zstd::zstd_safe::{CParameter, DParameter, FrameFormat as CFormat};
+    use zstd_rs::FrameFormat;
+    for (i, level) in [1, 3, 19].into_iter().enumerate() {
+        let data = common::text(50 + i * 700, 40 + i as u64);
+        let cfg = CompressionConfig { level, checksum: true, format: FrameFormat::Magicless, ..CompressionConfig::DEFAULT };
+        let mut ours = Vec::new();
+        Compressor::new(cfg).unwrap().compress(&data, None, &mut ours).unwrap();
+        let mut standard = Vec::new();
+        Compressor::new(CompressionConfig { format: FrameFormat::Standard, ..cfg }).unwrap().compress(&data, None, &mut standard).unwrap();
+        assert_eq!(ours.len() + 4, standard.len());
+        let mut d = zstd::bulk::Decompressor::new().unwrap();
+        d.set_parameter(DParameter::Format(CFormat::Magicless)).unwrap();
+        assert_eq!(d.decompress(&ours, data.len()).unwrap(), data, "C decodes our magicless frame");
+        let mut c = zstd::bulk::Compressor::new(level).unwrap();
+        c.set_parameter(CParameter::Format(CFormat::Magicless)).unwrap();
+        let theirs = c.compress(&data).unwrap();
+        let mut out = Vec::new();
+        Decompressor::new().decompress_format(FrameFormat::Magicless, &theirs, None, data.len(), &mut out).unwrap();
+        assert_eq!(out, data, "we decode C's magicless frame");
+        assert!(Decompressor::new().decompress(&theirs, None, data.len(), &mut Vec::new()).is_err());
+    }
+}

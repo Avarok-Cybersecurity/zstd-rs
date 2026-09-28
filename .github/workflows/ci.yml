@@ -61,6 +61,8 @@ jobs:
         run: node scripts/check-wasm-imports.mjs target/wasm32-unknown-unknown/release/zstd_rs_wasm.wasm
       - name: Round trip under V8
         run: node zstd-rs-wasm/js/smoke.mjs target/wasm32-unknown-unknown/release/zstd_rs_wasm.wasm
+      - name: Worker-pool jobs are byte-identical to one instance
+        run: node zstd-rs-wasm/js/workers.mjs target/wasm32-unknown-unknown/release/zstd_rs_wasm.wasm 4
 
   fuzz-smoke:
     runs-on: ubuntu-latest

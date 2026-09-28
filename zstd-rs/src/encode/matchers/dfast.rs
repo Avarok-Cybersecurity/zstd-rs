@@ -23,33 +23,31 @@ pub fn parse(t: &mut Tables, b: &BlockInput<'_>, p: &CParams, store: &mut SeqSto
     }
     let long = &mut t.hash[..1 << hl];
     let short = &mut t.hash2[..1 << hs];
+    let mut r0 = store.reps[0] as usize;
     while ip < ilimit {
         let v = read64(src, ip);
         let (h8, h4) = (hash(v, 8, hl), hash(v, mls, hs));
         let (cl, cs) = (long[h8] as usize, short[h4] as usize);
         long[h8] = (epoch + ip) as u32;
         short[h4] = (epoch + ip) as u32;
-        let r0 = store.reps[0] as usize;
-        let rl = rep_len(b, ip + 1, r0);
-        let within = |s: usize, off: usize, ml: usize| {
-            let (s, ml) = extend_back(src, s, off, ml, anchor, b.low);
-            (s, off, ml)
-        };
-        let found = if rl > 0 {
-            Some((ip + 1, r0, rl))
+        let found = if r0 != 0 && ip + 1 >= b.low + r0 && r0 <= b.max_dist && read32(src, ip + 1 - r0) == (v >> 8) as u32 {
+            Some((ip + 1, r0, 4 + count(src, ip + 5 - r0, ip + 5, b.end)))
         } else if let Some(c) = valid(cl, epoch, b, ip).filter(|&c| read64(src, c) == v) {
-            Some(within(ip, ip - c, 8 + count(src, c + 8, ip + 8, b.end)))
-        } else if let Some(m) = b.dict.and_then(|d| dict_candidate(b, d.hash[hash(v, 8, d.params.hash_log)], ip, v, anchor, 8)) {
+            let (s, l) = extend_back(src, ip, ip - c, 8 + count(src, c + 8, ip + 8, b.end), anchor, b.low);
+            Some((s, ip - c, l))
+        } else if let Some(m) = if b.dict.is_some() { dict_long(b, r0, ip, v, anchor) } else { None } {
             Some(m)
         } else if let Some(c) = valid(cs, epoch, b, ip).filter(|&c| read32(src, c) == v as u32) {
             let v1 = read64(src, ip + 1);
             let h81 = hash(v1, 8, hl);
             let c1 = long[h81] as usize;
             long[h81] = (epoch + ip + 1) as u32;
-            match valid(c1, epoch, b, ip + 1).filter(|&c| read64(src, c) == v1) {
-                Some(c1) => Some(within(ip + 1, ip + 1 - c1, 8 + count(src, c1 + 8, ip + 9, b.end))),
-                None => Some(within(ip, ip - c, 4 + count(src, c + 4, ip + 4, b.end))),
-            }
+            let (p, c, l) = match valid(c1, epoch, b, ip + 1).filter(|&c| read64(src, c) == v1) {
+                Some(c1) => (ip + 1, c1, 8 + count(src, c1 + 8, ip + 9, b.end)),
+                None => (ip, c, 4 + count(src, c + 4, ip + 4, b.end)),
+            };
+            let (s, l) = extend_back(src, p, p - c, l, anchor, b.low);
+            Some((s, p - c, l))
         } else {
             b.dict.and_then(|d| dict_candidate(b, d.hash2[hash(v, mls, d.params.chain_log)], ip, v, anchor, 4))
         };
@@ -83,6 +81,20 @@ pub fn parse(t: &mut Tables, b: &BlockInput<'_>, p: &CParams, store: &mut SeqSto
                 anchor = ip;
             }
         }
+        r0 = store.reps[0] as usize;
     }
     store.tail(&src[anchor..b.end]);
+}
+
+/// With a dictionary: repeat 0 reaching into it at `ip + 1`, else its 8-byte table at `ip`.
+#[inline(always)]
+fn dict_long(b: &BlockInput<'_>, r0: usize, ip: usize, v: u64, anchor: usize) -> Option<(usize, usize, usize)> {
+    let d = b.dict?;
+    if r0 > ip + 1 - b.low {
+        let rl = rep_len(b, ip + 1, r0);
+        if rl > 0 {
+            return Some((ip + 1, r0, rl));
+        }
+    }
+    dict_candidate(b, d.hash[hash(v, 8, d.params.hash_log)], ip, v, anchor, 8)
 }

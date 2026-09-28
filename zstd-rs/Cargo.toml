@@ -17,4 +17,4 @@ name = "zstd_rs"
 [dependencies]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-zstd = { version = "0.13", default-features = false, features = ["zdict_builder"] }
+zstd = { version = "0.13", default-features = false, features = ["zdict_builder", "experimental"] }
