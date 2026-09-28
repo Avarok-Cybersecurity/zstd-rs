@@ -1,29 +1,67 @@
 # zstd-rs: progress
 
-Pure-Rust, `#![no_std]` + `alloc`, `#![forbid(unsafe_code)]` Zstandard (RFC 8878)
-compressor and decompressor with dictionary support. Crate: `zstd-rs/`.
+A pure-Rust Zstandard (RFC 8878) compressor and decompressor with dictionary support. It is `#![no_std]` + `alloc` and `#![forbid(unsafe_code)]`.
 
-## Status (updated each iteration)
+The repository is a Cargo workspace:
 
-- **Done**
-  - Decoder: all of RFC 8878. That covers raw, RLE and compressed blocks; the four literal modes (raw, RLE, Huffman, treeless); and every sequence table mode (predefined, RLE, FSE, repeat). It also handles repeat offsets, zstd-format and raw dictionaries, skippable frames, multiple frames, XXH64 checksum checks, a caller-supplied output cap, and malformed input without panicking.
-  - Encoder: levels -7..=22 using the reference level tables and size adjustment.
-    - Match finders: fast, dfast, greedy/lazy/lazy2 (hash chain), and an optimal parser (btopt/btultra/btultra2-style price DP).
-    - Entropy stage: Huffman literals (new or repeat table, 1 or 4 streams) and FSE sequences, with cost-based mode selection.
-    - Frames: optional checksum, content size, dictionary ID, attached dictionaries (tables built once, never copied per frame), and dictionary entropy tables.
-  - Interop:
-    - C encoder → our decoder at levels -5..19, sizes 0 B..3 MB, streaming frames without content size, ZDICT-trained and raw dictionaries, multi-frame and skippable frames.
-    - Our encoder → C bulk *and* streaming decoders (and ours) at 17 levels × the same sizes, with trained and raw dictionaries.
-    - The vendored reference golden vectors (decompression, decompression-errors, compression inputs).
-- **In progress:** benchmark harness on the ILM corpus.
-- **Next:** small-frame speed, fuzzing, the wasm32 build plus V8 bench, the executor API, and the dictionary trainer.
+- `zstd-rs/` (core)
+- `zstd-rs-exec/` (thread executor)
+- `zstd-rs-wasm/` (raw wasm ABI + JS)
+- `bench/` (native and V8 harnesses; its own workspace, and needs the local rill checkout)
 
-## Early ratio check (synthetic corpus, vs C at the same level)
+## Status
 
-Size ratio is ours / C; below 1 means ours is smaller.
+### Done
 
-| input | L1 | L3 | L5 | L9 | L19 |
-|---|---|---|---|---|---|
-| text 100 KB | 1.024 | 1.006 | 0.997 | 0.996 | 1.046 |
-| mixed 1 MB | 1.012 | 1.003 | 0.997 | 0.998 | 1.024 |
-| text 600 B | 0.965 | 0.962 | 0.993 | 0.989 | 1.008 |
+- **Decoder:** all of RFC 8878.
+  - Blocks: raw, RLE and compressed.
+  - Literals: all four modes. Sequences: all four table modes.
+  - Repeat offsets; zstd-format and raw dictionaries; skippable and concatenated frames.
+  - Checks the XXH64 checksum and enforces Block_Maximum_Size.
+  - Takes a caller-supplied output cap, and returns errors instead of panicking.
+  - Also decodes the magicless format.
+- **Encoder:** levels -7..=22, using the reference's level tables and size adjustment.
+  - Strategies: fast and dfast, greedy/lazy/lazy2 over hash chains, and an optimal parser.
+  - Entropy: Huffman literals and FSE sequences, chosen by estimated cost (with the reference's heuristics for small blocks at fast levels).
+  - Frame options: checksum, content size, dictionary ID, magicless.
+  - Dictionaries are attached (built once per level, shared, never copied per frame).
+- **Parallelism boundary (SBIO):**
+  - `par::plan` / `compress_frame` / `compress_frames` / `decompress_frames` over an `Executor` trait.
+  - Executors: `Sequential` in the core, `ThreadPool` in zstd-rs-exec, and a JS worker pool (`zstd-rs-wasm/js/workers.mjs`).
+  - Output is byte-identical for every executor. This is tested in Rust and in Node.
+- **wasm32-unknown-unknown:**
+  - The module has **0 imports**.
+  - Size is 164 KB raw, 64 KB gzipped (encoder + decoder).
+  - V8 smoke, magicless and worker tests run in CI.
+- **Tests:**
+  - Interop with the C library in both directions: 17 levels, 0 B–3 MB, with and without dictionaries, bulk and streaming C decoders, magicless.
+  - The reference golden vectors, and fuzz regressions.
+  - Negative controls (`scripts/negative_controls.sh`): six injected defects, each caught by its test and green again after restore.
+- **Quality:** clippy `-D warnings`, rustfmt, every file ≤ 250 lines, and README examples run as doctests.
+- **Repo:** README, both licenses, crate metadata, CI workflow, local commits; `cargo publish -p zstd-rs --dry-run` passes.
+
+### Not done / limitations
+
+- No streaming Read/Write API (one-shot plus the job API).
+- Hash chains are used where the reference uses binary trees (levels 13–22).
+- Native speed on large inputs is below C (see the tables).
+- No built-in dictionary trainer (use `zstd --train`).
+
+## Fuzzing (cargo-fuzz / libFuzzer, macOS arm64)
+
+| target | what it checks | runs | findings |
+|---|---|---|---|
+| `decode` | arbitrary bytes ± dictionary; never panics, respects the cap | 75.7 M (30 min) | 0 |
+| `roundtrip` | our encoder at 11 levels ± dictionary, checksum, window, magicless; our decoder and C must both reproduce the input | 3.7 M (30 min) | 0 |
+| `diff_c` | differential decoding against C | 21.6 M + 30 min | 1 (fixed) |
+
+The one `diff_c` finding was real, and is fixed and kept in `tests/regressions`: literal sections and block output are now limited to the *frame's* Block_Maximum_Size (min(window, 128 KiB)), not just to 128 KiB.
+
+`diff_c` also documents intentional strictness, where we follow the reference's streaming decoder and RFC 8878 rather than its one-shot fast paths:
+- raw and RLE blocks above Block_Maximum_Size are rejected;
+- Huffman streams must be consumed exactly and must carry an end marker;
+- legacy (pre-v0.8) formats are out of scope.
+
+## Benchmarks
+
+See the README for the V8 table. The native tables are below and are refreshed each iteration.
