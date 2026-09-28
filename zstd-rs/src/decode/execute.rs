@@ -5,6 +5,7 @@
 //! so short copies can move fixed 16-byte chunks ("wild copies") without per-byte
 //! bounds logic; the caller truncates it to the logical length afterwards.
 use crate::error::{Error, Result};
+#[cfg(test)]
 use crate::frame::BLOCK_MAX;
 use alloc::vec::Vec;
 
@@ -20,7 +21,7 @@ pub struct Exec<'a> {
     dict: &'a [u8],
     /// Largest `pos` the caller allows.
     limit: usize,
-    /// Largest `pos` this block may reach (128 KiB past its start).
+    /// Largest `pos` this block may reach (Block_Maximum_Size past its start).
     block_end: usize,
     /// Literals consumed so far in this block.
     lit_pos: usize,
@@ -29,8 +30,8 @@ pub struct Exec<'a> {
 impl<'a> Exec<'a> {
     /// Starts a block at `pos`. `buf` grows on demand (doubling, never past the
     /// block or caller cap), keeping `SLACK` writable bytes past the logical end.
-    pub fn new(buf: &'a mut Vec<u8>, pos: usize, frame_start: usize, dict: &'a [u8], limit: usize) -> Self {
-        Exec { buf, pos, frame_start, dict, limit, block_end: pos + BLOCK_MAX, lit_pos: 0 }
+    pub fn new(buf: &'a mut Vec<u8>, pos: usize, frame_start: usize, dict: &'a [u8], limit: usize, block_max: usize) -> Self {
+        Exec { buf, pos, frame_start, dict, limit, block_end: pos + block_max, lit_pos: 0 }
     }
 
     #[inline(always)]
@@ -40,7 +41,7 @@ impl<'a> Exec<'a> {
             return Err(Error::OutputLimit);
         }
         if end > self.block_end {
-            return Err(Error::Corrupt("block regenerates more than 128 KiB"));
+            return Err(Error::Corrupt("block regenerates more than Block_Maximum_Size"));
         }
         if end + SLACK > self.buf.len() {
             self.grow(end);
@@ -149,7 +150,7 @@ mod tests {
 
     fn run(dict: &[u8], lits: &[u8], seqs: &[(usize, usize, usize)], limit: usize) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
-        let mut ex = Exec::new(&mut buf, 0, 0, dict, limit);
+        let mut ex = Exec::new(&mut buf, 0, 0, dict, limit, BLOCK_MAX);
         for &(ll, ml, off) in seqs {
             ex.sequence(lits, lits.len(), ll, ml, off)?;
         }

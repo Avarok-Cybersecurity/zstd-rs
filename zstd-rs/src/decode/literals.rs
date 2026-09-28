@@ -3,7 +3,6 @@ use super::execute::SLACK;
 use super::state::{DecState, Src};
 use super::DecoderDictionary;
 use crate::error::{Error, Result};
-use crate::frame::BLOCK_MAX;
 use crate::huf::dtable::HufDTable;
 use crate::huf::weights;
 
@@ -17,7 +16,8 @@ pub enum Lits {
 
 /// Parses the literals section at the start of `block`. Returns where the
 /// literals are and how many block bytes the section used.
-pub fn decode(block: &[u8], st: &mut DecState, dict: Option<&DecoderDictionary>) -> Result<(Lits, usize)> {
+/// `block_max` is the frame's Block_Maximum_Size (min(window, 128 KiB)).
+pub fn decode(block: &[u8], st: &mut DecState, dict: Option<&DecoderDictionary>, block_max: usize) -> Result<(Lits, usize)> {
     let b0 = *block.first().ok_or(Error::Truncated)? as usize;
     let ty = b0 & 3;
     let sf = (b0 >> 2) & 3;
@@ -28,7 +28,7 @@ pub fn decode(block: &[u8], st: &mut DecState, dict: Option<&DecoderDictionary>)
             1 => ((b0 >> 4) | (byte(1)? << 4), 2),
             _ => ((b0 >> 4) | (byte(1)? << 4) | (byte(2)? << 12), 3),
         };
-        if size > BLOCK_MAX {
+        if size > block_max {
             return Err(Error::Corrupt("literals larger than a block"));
         }
         if ty == 0 {
@@ -50,7 +50,7 @@ pub fn decode(block: &[u8], st: &mut DecState, dict: Option<&DecoderDictionary>)
     let bits = [10, 10, 14, 18][sf];
     let mask = (1u64 << bits) - 1;
     let (regen, comp, four) = (((v >> 4) & mask) as usize, ((v >> (4 + bits)) & mask) as usize, sf != 0);
-    if regen > BLOCK_MAX {
+    if regen > block_max {
         return Err(Error::Corrupt("literals larger than a block"));
     }
     let body = block.get(hlen..hlen + comp).ok_or(Error::Truncated)?;

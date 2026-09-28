@@ -161,7 +161,7 @@ impl Decompressor {
                 }
                 BlockType::Compressed => {
                     let body = src.get(at..at + size).ok_or(Error::Truncated)?;
-                    *pos = self.block(body, dict, frame_start, *pos, limit, out)?;
+                    *pos = self.block(body, dict, &Bounds { frame_start, limit, block_max }, *pos, out)?;
                     at += size;
                 }
             }
@@ -172,18 +172,10 @@ impl Decompressor {
     }
 
     /// Decodes one compressed block at `pos`; returns the new logical end.
-    fn block(
-        &mut self,
-        body: &[u8],
-        dict: Option<&DecoderDictionary>,
-        frame_start: usize,
-        pos: usize,
-        limit: usize,
-        out: &mut Vec<u8>,
-    ) -> Result<usize> {
-        let (lits, used) = literals::decode(body, &mut self.st, dict)?;
+    fn block(&mut self, body: &[u8], dict: Option<&DecoderDictionary>, b: &Bounds, pos: usize, out: &mut Vec<u8>) -> Result<usize> {
+        let (lits, used) = literals::decode(body, &mut self.st, dict, b.block_max)?;
         let history: &[u8] = dict.map(|d| d.dict.content.as_slice()).unwrap_or(&[]);
-        let mut ex = Exec::new(out, pos, frame_start, history, limit);
+        let mut ex = Exec::new(out, pos, b.frame_start, history, b.limit, b.block_max);
         let r = sequences::decode(body, used, lits, &mut self.st, &self.pre, dict, &mut ex);
         let end = ex.pos;
         r.map(|_| end)
@@ -203,4 +195,14 @@ fn make_room(out: &mut Vec<u8>, pos: usize, n: usize, limit: usize) -> Result<()
         out.resize(end, 0);
     }
     Ok(())
+}
+
+/// Per-frame bounds every block is checked against.
+struct Bounds {
+    /// Index in the output where the frame starts.
+    frame_start: usize,
+    /// Caller's cap on the output length.
+    limit: usize,
+    /// Block_Maximum_Size: min(window, 128 KiB).
+    block_max: usize,
 }
