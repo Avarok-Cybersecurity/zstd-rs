@@ -172,3 +172,17 @@ ruzstd 0.8 could not decode any dictionary frame in this corpus (`UninitializedH
 
 Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT) at your option.
 The test vectors in `zstd-rs/tests/golden` come from the reference repository (BSD-3-Clause / GPL-2.0).
+
+## Releasing
+
+Bump `version` in `zstd-rs/Cargo.toml` and `zstd-rs-exec/Cargo.toml` (and the `zstd-rs`
+dependency in `zstd-rs-exec`), commit, then push a matching tag:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` runs the full CI as its gate, refuses a tag that does not match
+every crate's version, publishes `zstd-rs` then `zstd-rs-exec` to crates.io with the organisation's
+`CARGO_REGISTRY_TOKEN` (skipping any version already published), and creates the GitHub release.
+A manual run from the Actions tab is a dry run unless `dry_run` is set to false.

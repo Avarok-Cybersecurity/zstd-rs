@@ -1,0 +1,94 @@
+name: Release
+
+# Publishes zstd-rs and zstd-rs-exec to crates.io and creates the GitHub release.
+#
+# Trigger: push a tag `vX.Y.Z` whose version equals every publishable crate's version.
+# Manual runs default to a dry run; publishing by hand needs `dry_run: false`.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Verify and package only; do not publish"
+        type: boolean
+        required: true
+        default: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Publish order: a crate after everything it depends on.
+  CRATES: "zstd-rs zstd-rs-exec"
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - id: v
+        name: The tag, and every publishable crate, name one version
+        run: |
+          set -euo pipefail
+          meta=$(cargo metadata --no-deps --format-version 1)
+          for c in $CRATES; do
+            v=$(jq -r --arg c "$c" '.packages[] | select(.name == $c) | .version' <<<"$meta")
+            [ -n "$v" ] || { echo "::error::crate $c not found"; exit 1; }
+            echo "$c $v"
+            if [ -z "${version:-}" ]; then version=$v; elif [ "$v" != "$version" ]; then
+              echo "::error::$c is $v but the others are $version"; exit 1; fi
+          done
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            [ "${GITHUB_REF_NAME}" = "v${version}" ] || {
+              echo "::error::tag ${GITHUB_REF_NAME} does not match crate version v${version}"; exit 1; }
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Package every crate (what crates.io would receive)
+        run: |
+          set -euo pipefail
+          for c in $CRATES; do cargo package -p "$c" --list > /dev/null; done
+          cargo publish -p zstd-rs --dry-run
+
+  publish:
+    needs: [ci, version]
+    if: github.ref_type == 'tag' || inputs.dry_run == false
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish to crates.io (skipping any version already there)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          [ -n "$CARGO_REGISTRY_TOKEN" ] || { echo "::error::CARGO_REGISTRY_TOKEN is not available"; exit 1; }
+          ua="zstd-rs-release (https://github.com/Avarok-Cybersecurity/zstd-rs)"
+          for c in $CRATES; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "https://crates.io/api/v1/crates/$c/$VERSION")
+            if [ "$code" = 200 ]; then echo "$c $VERSION is already on crates.io; skipping"; continue; fi
+            # cargo publish waits until the new version is in the index, so the next crate resolves it.
+            cargo publish -p "$c"
+          done
+      - name: GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag

@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs this whole file as its gate, so "releasable" has one definition.
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
