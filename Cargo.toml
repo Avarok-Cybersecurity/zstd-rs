@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["zstd-rs", "zstd-rs-exec", "zstd-rs-wasm"]
+
+[profile.release]
+opt-level = 3
+debug = false
+codegen-units = 1
+lto = "fat"
+panic = "abort"
+
+
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"

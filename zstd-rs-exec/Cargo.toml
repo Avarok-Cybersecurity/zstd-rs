@@ -1,0 +1,14 @@
+[package]
+name = "zstd-rs-exec"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Native thread executor for zstd-rs's parallel job API"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Avarok-Cybersecurity/zstd-rs"
+readme = "README.md"
+keywords = ["zstd", "compression", "parallel"]
+categories = ["compression", "concurrency"]
+
+[dependencies]
+zstd-rs = { version = "0.1.0", path = "../zstd-rs" }

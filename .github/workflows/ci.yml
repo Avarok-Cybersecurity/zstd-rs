@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Unit, interop (vs the C library) and golden-vector tests
+        run: cargo test --workspace --release
+
+  no_std:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+      - name: Build the core for a target without std
+        run: cargo build -p zstd-rs --release --target thumbv7em-none-eabihf
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cargo build -p zstd-rs-wasm --release --target wasm32-unknown-unknown
+      - name: The module must have no imports
+        run: node scripts/check-wasm-imports.mjs target/wasm32-unknown-unknown/release/zstd_rs_wasm.wasm
+      - name: Round trip under V8
+        run: node zstd-rs-wasm/js/smoke.mjs target/wasm32-unknown-unknown/release/zstd_rs_wasm.wasm
+
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz --locked
+      - name: Seed corpora
+        run: cargo run --release -p zstd-rs --example fuzz_seeds
+      - name: Fuzz each target for 60 s
+        working-directory: zstd-rs
+        run: |
+          for t in decode roundtrip diff_c; do
+            cargo +nightly fuzz run -O "$t" -- -max_total_time=60 -max_len=65536 -rss_limit_mb=2048
+          done

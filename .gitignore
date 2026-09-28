@@ -1,0 +1,28 @@
+# Build output
+target/
+**/target/
+Cargo.lock.bak
+
+# Fuzzing: corpora, crash artifacts and logs are regenerated, not versioned
+zstd-rs/fuzz/corpus/
+zstd-rs/fuzz/artifacts/
+zstd-rs/fuzz/coverage/
+zstd-rs/fuzz/logs/
+
+# Benchmark data and outputs (the ILM evaluation corpus is private and never committed)
+results/
+dicts/
+bench/data/
+bench/wasm/pkg/
+bench/wasm/out/
+*.csv
+*.profraw
+
+# Vendored upstream sources used only to extract test vectors
+vendor/
+
+# Editors / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

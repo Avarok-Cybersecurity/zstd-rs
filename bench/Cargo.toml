@@ -1,0 +1,16 @@
+[package]
+name = "zl-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+zstd-rs = { path = "../zstd-rs" }
+ruzstd = "0.8"
+brotli = { version = "8", default-features = false, features = ["std"] }
+brotli-decompressor = "5"
+miniz_oxide = "0.8"
+lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
+zstd = { version = "0.13", features = ["zdict_builder", "experimental"] }
+
+[workspace]

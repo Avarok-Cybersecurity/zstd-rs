@@ -1,0 +1,157 @@
+//! Frame and block headers (RFC 8878 §3.1.1), shared by encoder and decoder.
+use crate::error::{Error, Result};
+use alloc::vec::Vec;
+
+pub const MAGIC: u32 = 0xFD2F_B528;
+pub const SKIPPABLE_MASK: u32 = 0xFFFF_FFF0;
+pub const SKIPPABLE_BASE: u32 = 0x184D_2A50;
+/// Largest block content (and regenerated size) the format allows.
+pub const BLOCK_MAX: usize = 128 * 1024;
+pub const WINDOW_LOG_MIN: u32 = 10;
+pub const WINDOW_LOG_MAX: u32 = 31;
+
+/// A parsed frame header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameHeader {
+    /// Window size in bytes (equal to the content size for single-segment frames).
+    pub window_size: u64,
+    /// Declared decompressed size, if recorded.
+    pub content_size: Option<u64>,
+    /// 0 when the frame names no dictionary.
+    pub dict_id: u32,
+    /// A 4-byte XXH64-based checksum follows the last block.
+    pub checksum: bool,
+    /// No window descriptor: the window is the whole content.
+    pub single_segment: bool,
+    /// Bytes from the magic number through the end of the header.
+    pub header_len: usize,
+}
+
+fn le(src: &[u8], at: usize, n: usize) -> Result<u64> {
+    let b = src.get(at..at + n).ok_or(Error::Truncated)?;
+    Ok(b.iter().rev().fold(0u64, |acc, &x| (acc << 8) | x as u64))
+}
+
+impl FrameHeader {
+    /// Parses the header of a zstd frame starting at `src[0]` (the magic number).
+    pub fn parse(src: &[u8]) -> Result<FrameHeader> {
+        if le(src, 0, 4)? as u32 != MAGIC {
+            return Err(Error::BadMagic);
+        }
+        let fhd = *src.get(4).ok_or(Error::Truncated)?;
+        let fcs_flag = fhd >> 6;
+        let single_segment = fhd & 0x20 != 0;
+        if fhd & 0x08 != 0 {
+            return Err(Error::Reserved);
+        }
+        let checksum = fhd & 0x04 != 0;
+        let did_len = [0usize, 1, 2, 4][(fhd & 3) as usize];
+        let fcs_len = match fcs_flag {
+            0 if single_segment => 1,
+            0 => 0,
+            1 => 2,
+            2 => 4,
+            _ => 8,
+        };
+        let mut at = 5;
+        let mut window_size = 0u64;
+        if !single_segment {
+            let wd = *src.get(at).ok_or(Error::Truncated)?;
+            let log = WINDOW_LOG_MIN + (wd >> 3) as u32;
+            let base = 1u64 << log;
+            window_size = base + (base / 8) * (wd & 7) as u64;
+            at += 1;
+        }
+        let dict_id = le(src, at, did_len)? as u32;
+        at += did_len;
+        let content_size = match fcs_len {
+            0 => None,
+            2 => Some(le(src, at, 2)? + 256),
+            n => Some(le(src, at, n)?),
+        };
+        at += fcs_len;
+        if single_segment {
+            window_size = content_size.ok_or(Error::Corrupt("single segment without size"))?;
+        }
+        Ok(FrameHeader { window_size, content_size, dict_id, checksum, single_segment, header_len: at })
+    }
+
+    /// Appends this header (magic included). `window_log` is used when not single-segment.
+    pub fn write(&self, window_log: u32, out: &mut Vec<u8>) {
+        out.extend_from_slice(&MAGIC.to_le_bytes());
+        let (fcs_flag, fcs_len) = match self.content_size {
+            None => (0u8, 0usize),
+            Some(n) if self.single_segment && n < 256 => (0, 1),
+            Some(n) if (256..65536 + 256).contains(&n) => (1, 2),
+            Some(n) if n <= u32::MAX as u64 => (2, 4),
+            Some(_) => (3, 8),
+        };
+        let (did_flag, did_len) = match self.dict_id {
+            0 => (0u8, 0usize),
+            1..=255 => (1, 1),
+            256..=65535 => (2, 2),
+            _ => (3, 4),
+        };
+        let fhd = (fcs_flag << 6) | ((self.single_segment as u8) << 5) | ((self.checksum as u8) << 2) | did_flag;
+        out.push(fhd);
+        if !self.single_segment {
+            out.push(((window_log - WINDOW_LOG_MIN) << 3) as u8);
+        }
+        out.extend_from_slice(&self.dict_id.to_le_bytes()[..did_len]);
+        if let Some(n) = self.content_size {
+            let v = if fcs_len == 2 { n - 256 } else { n };
+            out.extend_from_slice(&v.to_le_bytes()[..fcs_len]);
+        }
+    }
+}
+
+/// Block types (RFC 8878 §3.1.1.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockType {
+    Raw,
+    Rle,
+    Compressed,
+}
+
+/// Parses a 3-byte block header: (last, type, size).
+pub fn parse_block_header(src: &[u8]) -> Result<(bool, BlockType, usize)> {
+    let v = le(src, 0, 3)? as u32;
+    let ty = match (v >> 1) & 3 {
+        0 => BlockType::Raw,
+        1 => BlockType::Rle,
+        2 => BlockType::Compressed,
+        _ => return Err(Error::Reserved),
+    };
+    Ok((v & 1 == 1, ty, (v >> 3) as usize))
+}
+
+pub fn write_block_header(last: bool, ty: BlockType, size: usize, out: &mut Vec<u8>) {
+    let t = match ty {
+        BlockType::Raw => 0,
+        BlockType::Rle => 1,
+        BlockType::Compressed => 2,
+    };
+    let v = (last as u32) | (t << 1) | ((size as u32) << 3);
+    out.extend_from_slice(&v.to_le_bytes()[..3]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn header_roundtrip() {
+        for (cs, ss, dict, ck) in
+            [(Some(0u64), true, 0u32, false), (Some(300), true, 7, true), (Some(70000), false, 70000, false), (None, false, 1 << 30, true)]
+        {
+            let h = FrameHeader { window_size: 0, content_size: cs, dict_id: dict, checksum: ck, single_segment: ss, header_len: 0 };
+            let mut out = Vec::new();
+            h.write(20, &mut out);
+            let p = FrameHeader::parse(&out).unwrap();
+            assert_eq!((p.content_size, p.dict_id, p.checksum, p.single_segment, p.header_len), (cs, dict, ck, ss, out.len()));
+            if !ss {
+                assert_eq!(p.window_size, 1 << 20);
+            }
+        }
+    }
+}

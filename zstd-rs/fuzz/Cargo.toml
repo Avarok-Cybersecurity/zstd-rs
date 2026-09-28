@@ -1,0 +1,34 @@
+[package]
+name = "zstd-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+zstd-rs = { path = ".." }
+zstd = { version = "0.13", default-features = false, features = ["zdict_builder"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "decode"
+path = "fuzz_targets/decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "roundtrip"
+path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "diff_c"
+path = "fuzz_targets/diff_c.rs"
+test = false
+doc = false
